@@ -4,7 +4,7 @@ An AI agent that reviews GitHub pull requests. It runs when a pull request is op
 
 It is built as an agent, not a "send the diff to an LLM" script: an orchestrator runs a bounded agent loop, and the model can act only by calling tools from a registry. Every call goes through validation and guardrails first, and anything that comes from the repository is treated as untrusted input.
 
-> **Status:** Stage 1 of 7 (secure foundation). The agent is not implemented yet. See the [Roadmap](#roadmap).
+> **Status:** Stage 2 of 7 (agent core). The orchestrator, tool registry and review model are implemented and tested against a fake LLM; GitHub and OpenAI integrations come next. See the [Roadmap](#roadmap).
 
 ## Architecture (target)
 
@@ -36,10 +36,26 @@ System instructions  →  Agent policies  →  Tool definitions  →  Repository
 
 Repository content (code, comments, READMEs, test output) can never change instructions, grant permissions, register tools, or request secrets.
 
+### Agent loop and guardrails
+
+Each step is one model round trip. Every tool call passes these checks, in order, before anything runs:
+
+1. **Exposure**: the tool exists and its risk level is allowed. The model is never offered `write` tools, and `New` refuses a policy that would allow them. Publishing is done by code, after validation.
+2. **Arguments**: they are validated against the tool's schema. Unknown properties are rejected.
+3. **Loop protection**: identical calls (same tool and arguments, after normalization) are refused. There is also a cap on calls per step.
+4. **Execution**: the tool runs under its own timeout, and a panic is turned into an error.
+5. **Output**: it is redacted, size-capped and wrapped in `<untrusted_content>` (with the delimiter escaped inside the content).
+
+The model finishes by calling `submit_review`, which the orchestrator handles itself. The review is strictly decoded and validated. If it is invalid, the errors go back to the model so it can fix them. On the last step only `submit_review` is offered, and if the model still sends invalid findings they are dropped instead of losing the whole review. If the budget runs out, the run stops with `ErrStepLimit` and nothing is published.
+
 ## Project layout
 
 ```text
 cmd/reviewer/        CLI entrypoint, run inside GitHub Actions
+internal/agent/      orchestrator (agent loop, guardrails), prompts, submit_review
+internal/tools/      tool registry, risk levels, argument schemas
+internal/domain/     Finding and Review: validation, confidence filter, ordering
+internal/llm/        provider-agnostic model contract
 internal/config/     environment loading, validation, Secret type
 internal/redact/     credential redaction for logs and tool output
 internal/logging/    slog logger with mandatory redaction
@@ -120,8 +136,8 @@ Treat the secret as **compromised** the moment it is committed, even if it was n
 
 ## Roadmap
 
-1. **Secure foundation** *(current)*: config, redaction, logging, secret scanning, CI, pre-commit
-2. **Agent core**: domain model (findings, review, validation), tool registry with schemas and risk levels, orchestrator loop with guardrails (tested against a fake LLM)
+1. **Secure foundation** *(done)*: config, redaction, logging, secret scanning, CI, pre-commit
+2. **Agent core** *(current)*: domain model (findings, review, validation), tool registry with schemas and risk levels, orchestrator loop with guardrails (tested against a fake LLM)
 3. **Integrations**: GitHub client (PR, SHAs, files, diff), OpenAI client with tool calling and structured output, `get_diff` / `read_file` / `search_code` with path confinement
 4. **MVP end-to-end**: `publish_review` (idempotent PR comment), AI review job in CI, Docker image
 5. **Verification tools**: sandboxed runner (allowlisted commands, timeouts, scrubbed environment), `run_tests`, `run_linter`, `run_static_analysis` (Semgrep)
