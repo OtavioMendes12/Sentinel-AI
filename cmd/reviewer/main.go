@@ -2,9 +2,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/OtavioMendes12/Sentinel-AI/internal/config"
 	"github.com/OtavioMendes12/Sentinel-AI/internal/logging"
@@ -28,8 +31,15 @@ func run(envFile string) error {
 		return fmt.Errorf("loading configuration:\n%w", err)
 	}
 
-	logger := logging.New(os.Stderr, cfg.Log.Level, cfg.Log.Format, redact.New(cfg.Secrets()...))
-	logger.Info("configuration loaded", "config", cfg)
-	logger.Warn("review pipeline not implemented yet; see the roadmap in README.md")
+	redactor := redact.New(cfg.Secrets()...)
+	logger := logging.New(os.Stderr, cfg.Log.Level, cfg.Log.Format, redactor)
+	logger.Debug("configuration loaded", "config", cfg)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := review(ctx, cfg, logger, redactor, os.Stdout); err != nil {
+		return fmt.Errorf("%s", redactor.Redact(err.Error()))
+	}
 	return nil
 }

@@ -129,7 +129,7 @@ func newFixture(t *testing.T, policy Policy, readHandler tools.Handler, replies 
 	mustRegister(t, reg, tools.Tool{Name: "publish_review", Description: "Publish.", InputSchema: &tools.Schema{Type: tools.TypeObject}, Risk: tools.RiskWrite,
 		Handler: func(context.Context, json.RawMessage) (string, error) { f.published = true; return "published", nil }})
 
-	orch, err := New(Options{LLM: f.llm, Registry: reg, Policy: policy, Redactor: redact.New("configured-secret-value")})
+	orch, err := New(Options{LLM: f.llm, Registry: reg, Policy: policy, Redactor: redact.New("configured-secret-value"), Language: "pt-BR"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -171,8 +171,11 @@ func TestRunHappyPath(t *testing.T) {
 	}
 
 	first := f.llm.requests[0]
-	if first.Messages[0].Role != llm.RoleSystem || first.Messages[0].Content != systemPrompt {
+	if first.Messages[0].Role != llm.RoleSystem || !strings.HasPrefix(first.Messages[0].Content, systemPrompt) {
 		t.Error("first message must be the system prompt")
+	}
+	if !strings.Contains(first.Messages[0].Content, `BCP 47 tag "pt-BR"`) {
+		t.Error("system prompt must set the review language")
 	}
 	if !strings.Contains(first.Messages[1].Content, `<untrusted_content source="diff">`) {
 		t.Error("diff must be wrapped as untrusted content")

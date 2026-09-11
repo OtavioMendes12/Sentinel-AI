@@ -26,9 +26,15 @@ const (
 	defaultAgentTimeout  = 5 * time.Minute
 	defaultRepoPath      = "."
 	defaultLogFormat     = "json"
+	defaultLanguage      = "pt-BR"
 )
 
-var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+var (
+	repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	// languagePattern accepts BCP 47 tags such as "pt-BR" or "en". Being strict
+	// keeps free text out of the system prompt.
+	languagePattern = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,2}$`)
+)
 
 // Config is the complete runtime configuration of the reviewer.
 type Config struct {
@@ -61,6 +67,7 @@ type AgentConfig struct {
 	MaxSteps      int
 	MinConfidence float64
 	Timeout       time.Duration
+	Language      string // BCP 47 tag for the review text, e.g. "pt-BR"
 }
 
 // LogConfig configures structured logging.
@@ -119,6 +126,7 @@ func FromLookup(lookup func(string) (string, bool)) (*Config, error) {
 			MaxSteps:      p.intInRange("MAX_AGENT_STEPS", defaultMaxAgentSteps, 1, maxAgentStepsLimit),
 			MinConfidence: p.probability("MIN_CONFIDENCE", defaultMinConfidence),
 			Timeout:       p.duration("AGENT_TIMEOUT", defaultAgentTimeout),
+			Language:      p.language("REVIEW_LANGUAGE"),
 		},
 		Log: LogConfig{
 			Level:  p.logLevel("LOG_LEVEL"),
@@ -159,6 +167,7 @@ func (c *Config) LogValue() slog.Value {
 			slog.Int("max_steps", c.Agent.MaxSteps),
 			slog.Float64("min_confidence", c.Agent.MinConfidence),
 			slog.Duration("timeout", c.Agent.Timeout),
+			slog.String("language", c.Agent.Language),
 		),
 		slog.String("log_level", c.Log.Level.String()),
 		slog.String("repo_path", c.RepoPath),
@@ -227,6 +236,15 @@ func (p *parser) repository(key string) string {
 		p.fail("%s is required (format: owner/name)", key)
 	case !repositoryPattern.MatchString(v):
 		p.fail("%s must have the form owner/name, got %q", key, v)
+	}
+	return v
+}
+
+func (p *parser) language(key string) string {
+	v := p.str(key, defaultLanguage)
+	if !languagePattern.MatchString(v) {
+		p.fail("%s must be a language tag such as pt-BR or en, got %q", key, v)
+		return defaultLanguage
 	}
 	return v
 }

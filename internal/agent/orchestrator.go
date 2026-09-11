@@ -68,15 +68,17 @@ type Options struct {
 	Policy   Policy
 	Redactor *redact.Redactor // scrubs tool output before it reaches the model
 	Logger   *slog.Logger
+	Language string // BCP 47 tag for the review text; defaults to "en"
 }
 
 // Orchestrator runs the agent loop. It is safe for concurrent use: all
 // per-review state lives in Run.
 type Orchestrator struct {
-	llm      llm.Client
-	policy   Policy
-	redactor *redact.Redactor
-	logger   *slog.Logger
+	llm          llm.Client
+	policy       Policy
+	redactor     *redact.Redactor
+	logger       *slog.Logger
+	systemPrompt string
 
 	exposed    map[string]tools.Tool // tools the model may call
 	specs      []llm.ToolSpec        // exposed tools plus submit_review
@@ -101,11 +103,12 @@ func New(opts Options) (*Orchestrator, error) {
 		logger = slog.New(slog.DiscardHandler)
 	}
 	o := &Orchestrator{
-		llm:      opts.LLM,
-		policy:   policy,
-		redactor: opts.Redactor,
-		logger:   logger,
-		exposed:  make(map[string]tools.Tool),
+		llm:          opts.LLM,
+		policy:       policy,
+		redactor:     opts.Redactor,
+		logger:       logger,
+		systemPrompt: buildSystemPrompt(opts.Language),
+		exposed:      make(map[string]tools.Tool),
 	}
 
 	for _, t := range opts.Registry.Tools() {
@@ -157,7 +160,7 @@ func (o *Orchestrator) Run(ctx context.Context, task Task) (*Result, error) {
 		seen:   make(map[string]int),
 		result: Result{ToolUsage: make(map[string]int)},
 		messages: []llm.Message{
-			{Role: llm.RoleSystem, Content: systemPrompt},
+			{Role: llm.RoleSystem, Content: o.systemPrompt},
 			{Role: llm.RoleUser, Content: taskPrompt(task, o.policy.MaxDiffBytes)},
 		},
 	}

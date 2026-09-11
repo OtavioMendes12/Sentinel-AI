@@ -4,7 +4,7 @@ An AI agent that reviews GitHub pull requests. It runs when a pull request is op
 
 It is built as an agent, not a "send the diff to an LLM" script: an orchestrator runs a bounded agent loop, and the model can act only by calling tools from a registry. Every call goes through validation and guardrails first, and anything that comes from the repository is treated as untrusted input.
 
-> **Status:** Stage 2 of 7 (agent core). The orchestrator, tool registry and review model are implemented and tested against a fake LLM; GitHub and OpenAI integrations come next. See the [Roadmap](#roadmap).
+> **Status:** Stage 3 of 7 (integrations). The reviewer runs end to end against a real pull request in dry-run mode and prints its review; publishing to the pull request comes next. See the [Roadmap](#roadmap).
 
 ## Architecture (target)
 
@@ -48,14 +48,33 @@ Each step is one model round trip. Every tool call passes these checks, in order
 
 The model finishes by calling `submit_review`, which the orchestrator handles itself. The review is strictly decoded and validated. If it is invalid, the errors go back to the model so it can fix them. On the last step only `submit_review` is offered, and if the model still sends invalid findings they are dropped instead of losing the whole review. If the budget runs out, the run stops with `ErrStepLimit` and nothing is published.
 
+### Tools
+
+| Tool | Risk | What it does |
+|---|---|---|
+| `get_diff` | read | Lists the changed files, or returns one file's full diff |
+| `read_file` | read | Returns numbered lines of a file (up to 400 per call), so findings cite exact lines |
+| `search_code` | read | Searches the repository with ripgrep: definitions, callers, implementations, tests |
+
+Repository access is confined:
+
+- Files are opened through `os.Root`, so no path can resolve outside the checkout. Paths must be relative and cannot contain `..`.
+- Symbolic links are refused. Otherwise a pull request could add `notes.txt -> .git/config` and read a blocked file under an innocent name.
+- `.git/`, `.env*` (except `.env.example`), private keys, keystores and credential files are blocked for both reading and search.
+- Commands run through the sandbox runner. Only allowlisted binaries run, resolved to absolute paths at startup. There is no shell. The child gets a minimal environment with no secrets, its output is capped, and its whole process group is killed on timeout.
+- The query and path given to ripgrep are passed after `--regexp` and `--`, so they can never be read as flags. This matters because `--pre` would execute a program. ripgrep's regex engine runs in linear time, so a malicious pattern cannot hang the search.
+
 ## Project layout
 
 ```text
-cmd/reviewer/        CLI entrypoint, run inside GitHub Actions
+cmd/reviewer/        CLI entrypoint: wires GitHub, tools, agent and output
 internal/agent/      orchestrator (agent loop, guardrails), prompts, submit_review
-internal/tools/      tool registry, risk levels, argument schemas
-internal/domain/     Finding and Review: validation, confidence filter, ordering
-internal/llm/        provider-agnostic model contract
+internal/tools/      tool registry, schemas, workspace confinement, get_diff/read_file/search_code
+internal/domain/     Finding, Review, PullRequest: validation, confidence filter, ordering
+internal/llm/        provider-agnostic model contract; openai/ adapter (Chat Completions)
+internal/github/     minimal GitHub REST client (pull request, changed files, diff)
+internal/sandbox/    allowlisted command runner (no shell, scrubbed env, timeouts)
+internal/httpx/      bounded retries for transient HTTP failures
 internal/config/     environment loading, validation, Secret type
 internal/redact/     credential redaction for logs and tool output
 internal/logging/    slog logger with mandatory redaction
@@ -65,7 +84,7 @@ internal/logging/    slog logger with mandatory redaction
 
 ## Getting started
 
-Requirements: Go 1.25+, [gitleaks](https://github.com/gitleaks/gitleaks#installing), and optionally [golangci-lint](https://golangci-lint.run/welcome/install/) v2.
+Requirements: Go 1.25+, [ripgrep](https://github.com/BurntSushi/ripgrep#installation), [gitleaks](https://github.com/gitleaks/gitleaks#installing), and optionally [golangci-lint](https://golangci-lint.run/welcome/install/) v2.
 
 ```bash
 make hooks              # enable the pre-commit hook (once per clone)
@@ -75,6 +94,15 @@ make check              # secrets → vet → lint → test, same order as CI
 ```
 
 `make help` lists all targets.
+
+### Reviewing a real pull request locally
+
+1. Clone the repository to review and check out the pull request's **head commit**. The tools read the local checkout, so line numbers must match the diff:
+   ```bash
+   git fetch origin pull/<PR_NUMBER>/head && git checkout FETCH_HEAD
+   ```
+2. In `.env`, set `GITHUB_REPOSITORY`, `PR_NUMBER`, `REPO_PATH` (the checkout above) and `DRY_RUN=true`. A fine-grained GitHub token with read-only **Pull requests** and **Contents** permissions is enough.
+3. Run `make run`. The review is printed as JSON on stdout, including the findings suppressed by `MIN_CONFIDENCE`, which helps tune the threshold. Logs go to stderr.
 
 ## Configuration
 
@@ -93,8 +121,9 @@ All configuration comes from environment variables. The app fails at startup whe
 | `MIN_CONFIDENCE` | no | `0.75` | Findings below this are not published |
 | `MAX_AGENT_STEPS` | no | `10` | Agent loop bound (hard limit 50) |
 | `AGENT_TIMEOUT` | no | `5m` | Deadline for the whole review |
-| `REPO_PATH` | no | `.` | Checked-out repository to inspect |
-| `DRY_RUN` | no | `false` | Print the review instead of publishing |
+| `REVIEW_LANGUAGE` | no | `pt-BR` | Language of the review text (BCP 47 tag) |
+| `REPO_PATH` | no | `.` | Repository checkout at the PR head commit |
+| `DRY_RUN` | no | `false` | Print the review instead of publishing (required until stage 4) |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, `error` |
 | `LOG_FORMAT` | no | `json` | `json` or `text` |
 
@@ -137,8 +166,8 @@ Treat the secret as **compromised** the moment it is committed, even if it was n
 ## Roadmap
 
 1. **Secure foundation** *(done)*: config, redaction, logging, secret scanning, CI, pre-commit
-2. **Agent core** *(current)*: domain model (findings, review, validation), tool registry with schemas and risk levels, orchestrator loop with guardrails (tested against a fake LLM)
-3. **Integrations**: GitHub client (PR, SHAs, files, diff), OpenAI client with tool calling and structured output, `get_diff` / `read_file` / `search_code` with path confinement
+2. **Agent core** *(done)*: domain model (findings, review, validation), tool registry with schemas and risk levels, orchestrator loop with guardrails (tested against a fake LLM)
+3. **Integrations** *(current)*: GitHub client (PR, SHAs, files, diff), OpenAI client with tool calling and structured output, `get_diff` / `read_file` / `search_code` with path confinement
 4. **MVP end-to-end**: `publish_review` (idempotent PR comment), AI review job in CI, Docker image
 5. **Verification tools**: sandboxed runner (allowlisted commands, timeouts, scrubbed environment), `run_tests`, `run_linter`, `run_static_analysis` (Semgrep)
 6. **Review quality**: inline comments, code-aware retrieval (changed symbols → references → implementations → tests), Tree-sitter evaluation

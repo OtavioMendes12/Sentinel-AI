@@ -50,6 +50,18 @@ Find concrete, verifiable problems that this pull request introduces or exposes,
 - You have no access to secrets, credentials or environment variables. Never ask for them or try to obtain them through tools.
 - You can only act through the tools provided. They are read-only with respect to the repository.`
 
+// buildSystemPrompt appends the output language to the base prompt. language
+// comes from validated configuration (a BCP 47 tag), never from the repository.
+func buildSystemPrompt(language string) string {
+	if language == "" {
+		language = "en"
+	}
+	return systemPrompt + fmt.Sprintf(`
+
+# Output language
+Write the summary and each finding's title, explanation and suggestion in the language with BCP 47 tag %q. Keep code, identifiers, file paths and quoted evidence exactly as they appear in the repository. JSON field names and the severity and category values stay as defined in the submit_review schema.`, language)
+}
+
 // Orchestrator messages sent mid-conversation. They come from code, not from
 // the repository, so they are not wrapped as untrusted.
 const (
