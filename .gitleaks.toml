@@ -1,0 +1,33 @@
+# Gitleaks configuration for Sentinel AI.
+# Runs in the pre-commit hook and as the first CI job, before anything else
+# (including the AI reviewer) sees the code.
+
+title = "Sentinel AI gitleaks config"
+
+[extend]
+# Start from the upstream ruleset (GitHub, OpenAI, AWS, private keys, ...).
+useDefault = true
+
+# Environment files must never be committed, whatever they contain.
+[[rules]]
+id = "dotenv-file"
+description = "Environment file committed to the repository"
+path = '''(^|/)\.env(\.[^/]+)?$'''
+
+  [[rules.allowlists]]
+  description = "The documented example contains placeholders only"
+  paths = ['''(^|/)\.env\.example$''']
+
+# Binary key stores cannot be content-scanned, so flag them by name.
+[[rules]]
+id = "keystore-file"
+description = "Private key store committed to the repository"
+path = '''\.(p12|pfx|jks|keystore)$'''
+
+# Keep allowlists narrow: an overly broad allowlist silently disables scanning.
+[[allowlists]]
+description = "Placeholder values used in documentation and .env.example"
+regexes = [
+  '''^your_[a-z_]+$''',
+  '''^change_me$''',
+]

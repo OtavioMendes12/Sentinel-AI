@@ -1,0 +1,49 @@
+# Environment — never commit real configuration
+.env
+.env.*
+!.env.example
+*.env
+
+# Secrets and credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ecdsa*
+id_ed25519*
+credentials.json
+service-account*.json
+
+# IDE / local tooling
+.idea/
+.vscode/
+*.swp
+.claude/settings.local.json
+CLAUDE.local.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Build
+bin/
+dist/
+build/
+
+# Go
+*.test
+*.out
+coverage.*
+go.work
+go.work.sum
+
+# Temporary
+tmp/
+temp/

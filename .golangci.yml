@@ -1,0 +1,32 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - bodyclose     # unclosed HTTP response bodies (resource leaks)
+    - contextcheck  # functions that drop the caller's context
+    - errorlint     # error comparisons that break with wrapping
+    - gosec         # security issues
+    - misspell
+    - nilerr        # returning nil after checking a non-nil error
+    - noctx         # HTTP requests without a context
+    - unconvert
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters: [gosec]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/OtavioMendes12/Sentinel-AI
